@@ -112,26 +112,25 @@ async function fetchJobPage(url: string): Promise<string> {
 // ── Stable system prompt — cached across requests ─────────────────────────────
 const SYSTEM_PROMPT = `You are an expert resume coach and technical recruiter with 15+ years of experience across software engineering, product, and data roles.
 
-Your job is to analyze a candidate's resume against a specific job listing and produce specific, actionable tailoring suggestions.
+Analyze the candidate's resume against the job listing and respond with ONLY valid JSON — no markdown, no explanation, no code fences — in exactly this format:
 
-Structure your response with these sections using markdown:
+{
+  "fit": {
+    "verdict": "strong" | "moderate" | "weak",
+    "summary": "2-3 sentences explaining the overall fit, referencing specific evidence from both the resume and the job listing."
+  },
+  "suggestions": [
+    "Specific suggestion — quote the original resume text then show the improved version.",
+    "..."
+  ],
+  "tailoredResume": "The complete resume text with every suggested change already applied, ready to copy and use."
+}
 
-## Key Matches
-Skills, experience, and achievements from the resume that already align well with this role. Be specific — reference actual resume content.
-
-## Suggested Edits
-For each suggestion, quote the original resume text and provide an improved version. Focus on:
-- Reframing accomplishments to match the job's language and priorities
-- Quantifying impact where possible
-- Surfacing relevant experience that is buried or understated
-
-## Missing Keywords & Skills
-Important terms, technologies, or qualifications from the job description that are absent from the resume. For each, note whether it is a requirement or a nice-to-have, and suggest how to address the gap (add it if the candidate has the experience, or acknowledge the gap honestly).
-
-## Summary / Objective (optional)
-If the resume has a summary or objective section, suggest a tailored version for this specific role. If there is none, suggest whether adding one would help.
-
-Be concrete and surgical. Quote specific resume text when suggesting edits. Do not give generic advice.`
+Rules:
+- verdict must be exactly one of: strong, moderate, weak
+- suggestions: 5–10 items, each surgical and concrete — quote actual resume text when suggesting edits, note missing keywords and whether they are required or nice-to-have
+- tailoredResume: full resume with all edits applied — not a diff, not a summary
+- Respond with ONLY the JSON object, nothing else`
 
 export const handler = async (
   event: APIGatewayProxyEventV2
@@ -144,6 +143,8 @@ export const handler = async (
   }
 
   if (method !== 'POST') return err(405, 'Method not allowed', origin)
+
+  const path = event.rawPath
 
   // ── POST /fetch-job — public, no auth ─────────────────────────────────────
   if (path === '/fetch-job') {
@@ -220,14 +221,25 @@ export const handler = async (
       ],
     })
 
-    const suggestions = response.content
+    const raw = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
       .map(b => b.text)
       .join('')
 
+    let parsed: { fit: { verdict: string; summary: string }; suggestions: string[]; tailoredResume: string }
+    try {
+      const jsonStr = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      console.error('Failed to parse Claude JSON response:', raw.slice(0, 500))
+      return err(500, 'Failed to parse response from Claude', origin)
+    }
+
     return ok(
       {
-        suggestions,
+        fit: parsed.fit,
+        suggestions: parsed.suggestions,
+        tailoredResume: parsed.tailoredResume,
         usage: {
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
