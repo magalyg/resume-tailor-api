@@ -76,7 +76,40 @@ function err(status: number, message: string, origin: string): APIGatewayProxyRe
   }
 }
 
-// Stable system prompt — cached across requests
+// ── Job description fetcher ───────────────────────────────────────────────────
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+async function fetchJobPage(url: string): Promise<string> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ResumeTailor/1.0)' },
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const html = await res.text()
+    const text = stripHtml(html)
+    return text.slice(0, 30_000)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ── Stable system prompt — cached across requests ─────────────────────────────
 const SYSTEM_PROMPT = `You are an expert resume coach and technical recruiter with 15+ years of experience across software engineering, product, and data roles.
 
 Your job is to analyze a candidate's resume against a specific job listing and produce specific, actionable tailoring suggestions.
@@ -111,6 +144,23 @@ export const handler = async (
   }
 
   if (method !== 'POST') return err(405, 'Method not allowed', origin)
+
+  // ── POST /fetch-job — public, no auth ─────────────────────────────────────
+  if (path === '/fetch-job') {
+    let reqBody: { url?: string }
+    try { reqBody = JSON.parse(event.body ?? '{}') } catch { return err(400, 'Invalid JSON', origin) }
+    const url = String(reqBody.url ?? '').trim()
+    if (!url) return err(400, 'url is required', origin)
+    if (!/^https?:\/\//i.test(url)) return err(400, 'url must start with http:// or https://', origin)
+    try {
+      const text = await fetchJobPage(url)
+      if (!text) return err(422, 'Could not extract text from that page', origin)
+      return ok({ text }, origin)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to fetch URL'
+      return err(502, msg, origin)
+    }
+  }
 
   let body: { pdf?: string; jobListing?: string }
   try {
