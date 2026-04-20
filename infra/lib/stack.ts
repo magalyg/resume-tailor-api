@@ -65,18 +65,10 @@ export class ResumeTailorStack extends cdk.Stack {
     tokenSecretParam.grantRead(fn)
 
     // ── Lambda Function URL ────────────────────────────────────────────────
+    // No cors config here — the Lambda handles CORS inline (including OPTIONS preflight)
+    // to avoid duplicate Access-Control-Allow-Origin headers
     const fnUrl = fn.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedOrigins: [
-          'https://magalygutierrez.com',
-          'https://www.magalygutierrez.com',
-          'http://localhost:5173',
-          'http://localhost:5174',
-        ],
-        allowedMethods: [lambda.HttpMethod.POST],
-        allowedHeaders: ['Content-Type', 'Authorization', 'x-anthropic-key'],
-      },
     })
 
     // ── GitHub Actions OIDC deploy role ────────────────────────────────────
