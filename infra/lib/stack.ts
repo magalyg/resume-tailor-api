@@ -10,10 +10,7 @@ export class ResumeTailorStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props)
 
-    // ── SSM parameter for the shared admin token secret (from personal website) ──
-    const tokenSecretParam = ssm.StringParameter.fromStringParameterName(
-      this, 'TokenSecret', '/personal-website/token-secret'
-    )
+    const TOKEN_SECRET_PARAM_NAME = '/personal-website/token-secret'
 
     // ── SSM parameter for the Anthropic API key ────────────────────────────
     const apiKeyParam = new ssm.StringParameter(this, 'AnthropicApiKey', {
@@ -56,13 +53,16 @@ export class ResumeTailorStack extends cdk.Stack {
       memorySize: 512,
       environment: {
         ANTHROPIC_API_KEY_PARAM: apiKeyParam.parameterName,
-        TOKEN_SECRET_PARAM: tokenSecretParam.parameterName,
+        TOKEN_SECRET_PARAM: TOKEN_SECRET_PARAM_NAME,
         ALLOWED_ORIGIN: 'https://magalygutierrez.com',
       },
     })
 
     apiKeyParam.grantRead(fn)
-    tokenSecretParam.grantRead(fn)
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
+      resources: [`arn:aws:ssm:${this.region}:${this.account}:parameter/personal-website/token-secret`],
+    }))
 
     // ── Lambda Function URL ────────────────────────────────────────────────
     // No cors config here — the Lambda handles CORS inline (including OPTIONS preflight)
